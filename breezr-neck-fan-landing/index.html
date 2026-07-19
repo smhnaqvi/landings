@@ -390,7 +390,12 @@
             <button type="button" class="qty-btn" id="qtyPlus">+</button>
           </div>
 
-          <button type="submit" class="btn-order">Confirm Order — Cash on Delivery</button>
+          <!-- Honeypot: hidden from people; bots fill it in and get discarded. -->
+          <input type="text" name="website" id="website" tabindex="-1" autocomplete="off"
+                 aria-hidden="true" style="position:absolute;left:-9999px;opacity:0;height:0;width:0;">
+
+          <button type="submit" class="btn-order" id="orderSubmit">Confirm Order — Cash on Delivery</button>
+          <p id="orderError" style="display:none;margin-top:10px;text-align:center;font-size:13px;color:#c0392b;font-weight:600;"></p>
           <p class="form-note">No advance payment needed. Our team will call to confirm before dispatch.</p>
 
           <div class="security-note">
@@ -436,6 +441,15 @@
 </div>
 
 <script>
+// Backend the COD form posts to. `productId` must match the _id of this
+// product in the store database — the server prices orders from that record,
+// so the prices below are display-only.
+const API = {
+  baseUrl: "https://buraq-clone-api.vercel.app/api",
+  productId: "6a5d0010f6776150479aee56",
+  source: "breezr-neck-fan",
+};
+
 const PRODUCT = {
   brand: "BREEZR",
   brandTagline: "Portable, rechargeable cooling — made for Pakistan's summers.",
@@ -445,7 +459,9 @@ const PRODUCT = {
   taglineUrdu: "ٹھنڈی ہوا، ہر جگہ آپ کے ساتھ",
   description: "A hands-free, bladeless neck fan with 3 adjustable speeds and USB-rechargeable battery — built for Lahore's summer heat, whether you're commuting, walking, or stuck at a desk with no AC in sight.",
   currency: "Rs.",
-  price: 2499,
+  // Must match the product's price in the store database — the server prices
+  // every order from that record and ignores whatever is shown here.
+  price: 1200,
   compareAtPrice: 3999,
   rating: 4.7,
   reviewCount: 890,
@@ -595,14 +611,54 @@ document.getElementById('qtyMinus').addEventListener('click', () => { qty = Math
 document.getElementById('qtyPlus').addEventListener('click', () => { qty = Math.min(10, qty+1); qtyVal.textContent = qty; updateSummary(); });
 function updateSummary(){ document.getElementById('orderSummaryPrice').textContent = money(PRODUCT.price * qty); }
 
-document.getElementById('orderForm').addEventListener('submit', function(e){
+document.getElementById('orderForm').addEventListener('submit', async function(e){
   e.preventDefault();
+
+  const btn = document.getElementById('orderSubmit');
+  const errorEl = document.getElementById('orderError');
   const name = document.getElementById('fullName').value.trim();
   const city = document.getElementById('city').value;
-  document.getElementById('orderFormWrap').style.display = 'none';
-  document.getElementById('orderSuccess').classList.add('show');
-  document.getElementById('orderSuccessText').textContent =
-    `Thanks, ${name || 'there'}! Our team will call you shortly on WhatsApp to confirm your ${qty} unit(s) before we dispatch to ${city || 'your city'}.`;
+
+  errorEl.style.display = 'none';
+  btn.disabled = true;
+  btn.textContent = 'Placing your order…';
+
+  try {
+    const res = await fetch(`${API.baseUrl}/orders/guest`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        source: API.source,
+        website: document.getElementById('website').value, // honeypot
+        items: [{ product: API.productId, qty }],
+        shippingAddress: {
+          fullName: name,
+          phone: document.getElementById('phone').value.trim(),
+          address: document.getElementById('address').value.trim(),
+          city,
+          country: 'Pakistan',
+        },
+      }),
+    });
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.message || 'Something went wrong. Please try again.');
+    }
+
+    document.getElementById('orderFormWrap').style.display = 'none';
+    document.getElementById('orderSuccess').classList.add('show');
+    document.getElementById('orderSuccessText').textContent =
+      `Thanks, ${name || 'there'}! Our team will call you shortly on WhatsApp to confirm your ${qty} unit(s) before we dispatch to ${city || 'your city'}.`;
+  } catch (err) {
+    // Keep the filled-in form on screen so nothing has to be retyped.
+    errorEl.textContent = err.message === 'Failed to fetch'
+      ? 'Could not reach our server. Please check your connection and try again.'
+      : err.message;
+    errorEl.style.display = 'block';
+    btn.disabled = false;
+    btn.textContent = 'Confirm Order — Cash on Delivery';
+  }
 });
 
 const io = new IntersectionObserver((entries) => {
